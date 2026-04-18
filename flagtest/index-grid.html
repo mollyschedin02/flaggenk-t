@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="stylesheet" href="https://use.typekit.net/fcg7czk.css" />
+    <title>Image Vote Grid</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --text: #000000;
+        --muted: #ffffff;
+        --border: #ffffff;
+        --selected: #000000;
+      }
+
+      body {
+        margin: 0;
+        font-family: "parabolica", sans-serif;
+        font-weight: 400;
+        font-style: normal;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      .wrap {
+        max-width: 1700px;
+        margin: 0 auto;
+        padding: 16px;
+      }
+
+      h1 {
+        font-size: 48px;
+        font-weight: 400;
+        margin: 0 0 8px;
+        text-align: center;
+      }
+
+      .progress {
+        text-align: center;
+        color: var(--muted);
+        font-size: 20px;
+        margin-bottom: 18px;
+      }
+
+      .question {
+        text-align: center;
+        font-size: 32px;
+        margin: 12px 0 18px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        column-gap: 6px;
+        row-gap: 6px;
+      }
+
+      .imageBtn {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: #ffffff;
+        padding: 0;
+        cursor: pointer;
+        transition: border-color 120ms ease, box-shadow 120ms ease;
+      }
+
+      .imageBtn img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 1 / 0.75;
+        object-fit: contain;
+      }
+
+      .imageBtn.selected {
+        border-color: var(--selected);
+        box-shadow: 0 0 0 1px var(--selected);
+      }
+
+      .actions {
+        margin-top: 20px;
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+      }
+
+      button.actionBtn {
+        appearance: none;
+        border: 1px solid #000000;
+        background: #ffffff;
+        color: #000000;
+        padding: 10px 16px;
+        font-size: 18px;
+        cursor: pointer;
+      }
+
+      button.actionBtn.primary {
+        background: #000000;
+        color: #ffffff;
+      }
+
+      button.actionBtn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .status {
+        margin-top: 14px;
+        min-height: 24px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .error {
+        color: #a70000;
+      }
+
+      @media (max-width: 900px) {
+        .grid {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 540px) {
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .question {
+          font-size: 26px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Image Vote</h1>
+      <div id="progress" class="progress"></div>
+      <div id="question" class="question">Loading...</div>
+
+      <div id="imageGrid" class="grid" aria-label="Image options"></div>
+
+      <div class="actions">
+        <button id="prevBtn" class="actionBtn" type="button">Previous</button>
+        <button id="nextBtn" class="actionBtn primary" type="button">Next</button>
+      </div>
+
+      <div id="status" class="status"></div>
+    </div>
+
+    <script>
+      // Use a NEW Apps Script endpoint tied to your new spreadsheet.
+      // Example: https://script.google.com/macros/s/XXXX/exec
+      const LOG_ENDPOINT_URL =
+        "https://script.google.com/macros/s/AKfycbwsCjABOeekmoYTgeuBNaqiSggV8HEgqEfaUsJB5a4LPryRFhK6VtdTP2QM0AeMnPAG/exec";
+
+      const QUESTIONS = [
+        "Question 1: Which image best fits this question?",
+        "Question 2: Which image best fits this question?",
+        "Question 3: Which image best fits this question?",
+        "Question 4: Which image best fits this question?",
+        "Question 5: Which image best fits this question?",
+        "Question 6: Which image best fits this question?",
+        "Question 7: Which image best fits this question?",
+        "Question 8: Which image best fits this question?",
+        "Question 9: Which image best fits this question?",
+        "Question 10: Which image best fits this question?",
+      ];
+
+      const IMAGES = Array.from({ length: 15 }, (_, i) => ({
+        id: `flag${i + 1}.png`,
+        src: `./urval/${encodeURIComponent(`flag${i + 1}.png`)}`,
+      }));
+
+      const state = {
+        currentQuestionIndex: 0,
+        answers: Array.from({ length: QUESTIONS.length }, () => null),
+        isSubmitting: false,
+      };
+
+      const $ = (id) => document.getElementById(id);
+
+      function setStatus(message, isError) {
+        const statusEl = $("status");
+        statusEl.textContent = message || "";
+        statusEl.className = isError ? "status error" : "status";
+      }
+
+      function render() {
+        const qIndex = state.currentQuestionIndex;
+        $("progress").textContent = `Question ${qIndex + 1} / ${QUESTIONS.length}`;
+        $("question").textContent = QUESTIONS[qIndex];
+        renderGrid();
+
+        $("prevBtn").disabled = qIndex === 0 || state.isSubmitting;
+        $("nextBtn").textContent = qIndex === QUESTIONS.length - 1 ? "Submit" : "Next";
+        $("nextBtn").disabled = state.isSubmitting;
+      }
+
+      function renderGrid() {
+        const grid = $("imageGrid");
+        const selectedImage = state.answers[state.currentQuestionIndex];
+        grid.innerHTML = "";
+
+        IMAGES.forEach((image) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "imageBtn";
+          if (selectedImage === image.id) button.classList.add("selected");
+          button.setAttribute("aria-pressed", selectedImage === image.id ? "true" : "false");
+
+          const img = document.createElement("img");
+          img.src = image.src;
+          img.alt = image.id;
+
+          button.appendChild(img);
+          button.addEventListener("click", () => {
+            state.answers[state.currentQuestionIndex] = image.id;
+            renderGrid();
+          });
+
+          grid.appendChild(button);
+        });
+      }
+
+      function goPrevious() {
+        if (state.currentQuestionIndex > 0) {
+          state.currentQuestionIndex -= 1;
+          setStatus("");
+          render();
+        }
+      }
+
+      async function goNextOrSubmit() {
+        const qIndex = state.currentQuestionIndex;
+        const selectedImage = state.answers[qIndex];
+
+        if (!selectedImage) {
+          setStatus("Please choose one image before continuing.", true);
+          return;
+        }
+
+        setStatus("");
+        if (qIndex < QUESTIONS.length - 1) {
+          state.currentQuestionIndex += 1;
+          render();
+          return;
+        }
+
+        await submitAnswers();
+      }
+
+      async function submitAnswers() {
+        if (state.isSubmitting) return;
+        if (!LOG_ENDPOINT_URL || LOG_ENDPOINT_URL.includes("PASTE_NEW_SPREADSHEET_WEBAPP_URL_HERE")) {
+          setStatus("Add your spreadsheet web app URL in LOG_ENDPOINT_URL first.", true);
+          return;
+        }
+
+        state.isSubmitting = true;
+        render();
+        setStatus("Submitting answers...");
+
+        try {
+          const payload = {
+            timestamp: new Date().toISOString(),
+            answers: QUESTIONS.map((question, i) => ({
+              questionNumber: i + 1,
+              questionText: question,
+              selectedImage: state.answers[i],
+            })),
+          };
+
+          // Do not set Content-Type to application/json — that triggers a CORS preflight
+          // (OPTIONS) that Google Apps Script web apps often reject. Match index.html:
+          // plain POST body; Apps Script still receives e.postData.contents as JSON text.
+          const res = await fetch(LOG_ENDPOINT_URL, {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+
+          const responseText = await res.text().catch(() => "");
+          if (!res.ok) {
+            throw new Error("Submit failed: HTTP " + res.status + (responseText ? " - " + responseText : ""));
+          }
+
+          setStatus("Thanks! Your answers have been saved.");
+          $("nextBtn").disabled = true;
+          $("prevBtn").disabled = true;
+        } catch (error) {
+          setStatus(String(error && error.message ? error.message : error), true);
+          state.isSubmitting = false;
+          render();
+        }
+      }
+
+      $("prevBtn").addEventListener("click", goPrevious);
+      $("nextBtn").addEventListener("click", goNextOrSubmit);
+
+      render();
+    </script>
+  </body>
+</html>
